@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Dependency Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e3a8a 0%, #e5e7eb 100%);
+        }
+        #network {
+            width: 100%;
+            height: 600px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            background: #ffffff;
+        }
+        .container {
+            max-width: 1400px;
+        }
+        .search-input {
+            transition: all 0.3s ease;
+        }
+        .search-input:focus {
+            box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.3);
+            border-color: #00e5ff;
+        }
+        .table-row {
+            transition: background-color 0.2s ease;
+        }
+        .table-row:hover {
+            background-color: #f1f5f9;
+        }
+        .node {
+            transition: transform 0.2s ease;
+        }
+        .node:hover {
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="container mx-auto p-6">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <!-- First Row: Search -->
+            <div class="mb-6">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input
+                        v-model="searchQuery"
+                        type="text"
+                        placeholder="Search nodes..."
+                        class="search-input w-full pl-10 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400 text-gray-700"
+                    />
+                </div>
+            </div>
+            <!-- Second Row: Inventory Table and Graph -->
+            <div class="grid grid-cols-2 gap-6">
+                <!-- First Column: Inventory Table -->
+                <div>
+                    <h2 class="text-lg font-medium text-gray-700 mb-4">
+                        <i class="fas fa-list mr-2"></i>Node Inventory
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 text-gray-600 font-semibold"><i class="fas fa-tag mr-1"></i>Node Name</th>
+                                    <th class="p-3 text-gray-600 font-semibold"><i class="fas fa-layer-group mr-1"></i>Type</th>
+                                    <th class="p-3 text-gray-600 font-semibold"><i class="fas fa-network-wired mr-1"></i>Connections</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="node in filteredNodes" :key="node.id" class="table-row border-b">
+                                    <td class="p-3 text-gray-700">{{ node.label }}</td>
+                                    <td class="p-3 text-gray-700">{{ node.group.charAt(0).toUpperCase() + node.group.slice(1) }}</td>
+                                    <td class="p-3 text-teal-600">{{ getConnections(node) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Second Column: Graph -->
+                <div>
+                    <h2 class="text-lg font-medium text-gray-700 mb-4">
+                        <i class="fas fa-project-diagram mr-2"></i>Dependency Graph
+                    </h2>
+                    <div id="network"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // Reactive search query
+                const searchQuery = ref('');
+                
+                // Node data with initial positions for columnar alignment
+                const nodes = ref([
+                    { id: 0, label: 'API Gateway', group: 'gateway', x: 0, y: 0, fixed: { x: true, y: true } },
+                    { id: 1, label: 'Publisher A', group: 'publisher', x: 300, y: -100 },
+                    { id: 2, label: 'Publisher B', group: 'publisher', x: 300, y: 100 },
+                    { id: 3, label: 'Consumer X', group: 'consumer', x: -300, y: -150 },
+                    { id: 4, label: 'Consumer Y', group: 'consumer', x: -300, y: 0 },
+                    { id: 5, label: 'Consumer Z', group: 'consumer', x: -300, y: 150 },
+                ]);
+
+                // Edge data with unique IDs
+                const edges = ref([
+                    { id: 'e1', from: 3, to: 0 },
+                    { id: 'e2', from: 4, to: 0 },
+                    { id: 'e3', from: 5, to: 0 },
+                    { id: 'e4', from: 0, to: 1 },
+                    { id: 'e5', from: 0, to: 2 },
+                    { id: 'e6', from: 3, to: 1, via: 0 },
+                    { id: 'e7', from: 4, to: 1, via: 0 },
+                    { id: 'e8', from: 4, to: 2, via: 0 },
+                    { id: 'e9', from: 5, to: 2, via: 0 },
+                ]);
+
+                // Filtered nodes for table based on search query
+                const filteredNodes = computed(() => {
+                    if (!searchQuery.value) return nodes.value;
+                    const query = searchQuery.value.toLowerCase();
+                    return nodes.value.filter(node =>
+                        node.label.toLowerCase().includes(query)
+                    );
+                });
+
+                // Filtered edges for graph based on filtered nodes
+                const filteredEdges = computed(() => {
+                    const nodeIds = filteredNodes.value.map(node => node.id);
+                    return edges.value.filter(edge =>
+                        nodeIds.includes(edge.from) && nodeIds.includes(edge.to)
+                    );
+                });
+
+                // Highlighted nodes for graph (matched and connected nodes)
+                const highlightedNodes = computed(() => {
+                    if (!searchQuery.value) return nodes.value.map(node => ({ ...node, color: null }));
+                    const query = searchQuery.value.toLowerCase();
+                    const matchedNode = nodes.value.find(node => node.label.toLowerCase().includes(query));
+                    if (!matchedNode) return nodes.value.map(node => ({ ...node, color: null }));
+
+                    const connectedNodeIds = new Set();
+                    edges.value.forEach(edge => {
+                        if (edge.from === matchedNode.id) connectedNodeIds.add(edge.to);
+                        if (edge.to === matchedNode.id) connectedNodeIds.add(edge.from);
+                    });
+
+                    return nodes.value.map(node => {
+                        if (node.id === matchedNode.id) {
+                            return { ...node, color: { background: '#00e5ff', border: '#00b7eb' } };
+                        } else if (connectedNodeIds.has(node.id)) {
+                            return { ...node, color: { background: '#80deea', border: '#4fc3f7' } };
+                        }
+                        return { ...node, color: null };
+                    });
+                });
+
+                // Highlighted edges for graph (connected to matched node)
+                const highlightedEdges = computed(() => {
+                    if (!searchQuery.value) return edges.value.map(edge => ({ ...edge, color: null }));
+                    const query = searchQuery.value.toLowerCase();
+                    const matchedNode = nodes.value.find(node => node.label.toLowerCase().includes(query));
+                    if (!matchedNode) return edges.value.map(edge => ({ ...edge, color: null }));
+
+                    return edges.value.map(edge => {
+                        if (edge.from === matchedNode.id || edge.to === matchedNode.id) {
+                            return { ...edge, color: '#00e5ff', smooth: { type: 'curvedCW', roundness: 0.2 } };
+                        }
+                        return { ...edge, color: null, smooth: { type: 'curvedCW', roundness: 0.2 } };
+                    });
+                });
+
+                // Calculate connections for table
+                const getConnections = (node) => {
+                    if (node.group === 'publisher') {
+                        return edges.value.filter(edge =>
+                            edge.to === node.id && nodes.value.find(n => n.id === edge.from)?.group === 'consumer'
+                        ).length;
+                    } else {
+                        const connectedNodes = new Set();
+                        edges.value.forEach(edge => {
+                            if (edge.from === node.id) connectedNodes.add(edge.to);
+                            if (edge.to === node.id) connectedNodes.add(edge.from);
+                        });
+                        return connectedNodes.size;
+                    }
+                };
+
+                let network = null;
+
+                onMounted(() => {
+                    // Initialize vis.js network
+                    const container = document.getElementById('network');
+                    const data = {
+                        nodes: new vis.DataSet(highlightedNodes.value),
+                        edges: new vis.DataSet(highlightedEdges.value),
+                    };
+                    const options = {
+                        nodes: {
+                            shape: 'dot',
+                            size: 20,
+                            font: { size: 14, color: '#1f2937' },
+                            color: {
+                                background: '#5c6bc0',
+                                border: '#3f51b5',
+                                highlight: { background: '#00e5ff', border: '#00b7eb' },
+                            },
+                            scaling: {
+                                min: 10,
+                                max: 30,
+                                label: { enabled: true },
+                            },
+                        },
+                        edges: {
+                            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+                            color: { color: '#90a4ae', highlight: '#00e5ff' },
+                            smooth: { type: 'curvedCW', roundness: 0.2 },
+                            width: 2,
+                        },
+                        groups: {
+                            gateway: { 
+                                shape: 'box', 
+                                color: { background: '#d4af37', border: '#b8860b' },
+                                size: 30,
+                            },
+                            publisher: { 
+                                color: { background: '#26a69a', border: '#00695c' },
+                            },
+                            consumer: { 
+                                color: { background: '#5c6bc0', border: '#3f51b5' },
+                            },
+                        },
+                        physics: {
+                            enabled: true,
+                            forceAtlas2Based: {
+                                gravitationalConstant: -25,
+                                centralGravity: 0.005,
+                                springLength: 200,
+                                avoidOverlap: 0.5,
+                            },
+                            minVelocity: 0.75,
+                            stabilization: {
+                                enabled: true,
+                                iterations: 300,
+                            },
+                        },
+                        layout: {
+                            improvedLayout: true,
+                        },
+                        interaction: {
+                            dragNodes: true,
+                            dragView: true,
+                            zoomView: true,
+                            hover: true,
+                            hoverConnectedEdges: true,
+                        },
+                        manipulation: {
+                            enabled: true,
+                        },
+                    };
+                    network = new vis.Network(container, data, options);
+
+                    // Center API Gateway after initial stabilization
+                    network.on('stabilizationIterationsDone', () => {
+                        network.moveNode(0, 0, 0);
+                    });
+
+                    // Hover effects for nodes
+                    network.on('hoverNode', () => {
+                        container.style.cursor = 'pointer';
+                    });
+                    network.on('blurNode', () => {
+                        container.style.cursor = 'default';
+                    });
+                });
+
+                // Update graph on search or highlight changes
+                const updateNetwork = () => {
+                    if (network) {
+                        const updatedNodes = highlightedNodes.value.map(node => ({
+                            ...node,
+                            fixed: node.id === 0 ? { x: true, y: true } : false,
+                            x: node.id === 0 ? 0 : node.x,
+                            y: node.id === 0 ? 0 : node.y,
+                        }));
+                        network.setData({
+                            nodes: new vis.DataSet(updatedNodes),
+                            edges: new vis.DataSet(highlightedEdges.value),
+                        });
+                        network.stabilize(300);
+                        network.moveNode(0, 0, 0);
+                    }
+                };
+
+                // Watch for changes in search query and highlights
+                Vue.watch([searchQuery, highlightedNodes, highlightedEdges], updateNetwork);
+
+                return { searchQuery, filteredNodes, getConnections };
+            },
+        }).mount('#app');
+    </script>
+</body>
+</html>
